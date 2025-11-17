@@ -24,19 +24,6 @@ BRIGHTNESS = 0.2
 console = usb_cdc.console
 evt_ser = usb_cdc.data if usb_cdc.data is not None else usb_cdc.console
 
-def dbg(msg):
-    try:
-        print(msg)
-    except Exception:
-        pass
-
-dbg("code.py: starting...")
-
-if usb_cdc.data is None:
-    dbg("Note: usb_cdc.data NOT available, events running over console.")
-else:
-    dbg("usb_cdc.data is active, events running over data port.")
-
 # -------- BUTTONS --------
 buttons = []
 for idx, pin in enumerate(BUTTON_PINS, start=1):
@@ -44,7 +31,6 @@ for idx, pin in enumerate(BUTTON_PINS, start=1):
     # Button at 3.3V -> internal PULL_DOWN
     btn.switch_to_input(pull=digitalio.Pull.DOWN)
     buttons.append(btn)
-    dbg(f"Button {idx} on pin {pin}")
 
 # Initial state: all not pressed
 last_states = [False] * len(buttons)
@@ -64,8 +50,6 @@ for i in range(NUM_PIXELS):
     time.sleep(0.05)
 pixels.fill((0, 0, 0))
 
-dbg("NeoPixel initialized, main loop starting.")
-
 def send_event(msg: str):
     if evt_ser is not None:
         try:
@@ -74,9 +58,9 @@ def send_event(msg: str):
             evt_ser.write((msg + "\n").encode("utf-8"))
             evt_ser.flush()  # Ensure data is sent immediately
         except Exception as e:
-            dbg(f"Error sending '{msg}': {e}")
+            pass
     else:
-        dbg(f"Could not send event (no evt_ser): {msg}")
+        pass
 
 def set_pixel(i, r, g, b):
     if 0 <= i < NUM_PIXELS:
@@ -84,10 +68,8 @@ def set_pixel(i, r, g, b):
 
 def parse_host_command(line: str):
     line = line.strip()
-    dbg(f"Host command received: '{line}'")
     parts = line.split(":")
     if not parts or parts[0] != "LED":
-        dbg("Unknown command, ignoring.")
         return
 
     if parts[1] == "ALL":
@@ -95,14 +77,14 @@ def parse_host_command(line: str):
             r, g, b = map(int, parts[2].split(","))
             pixels.fill((r, g, b))
         except Exception as e:
-            dbg(f"Error parsing LED:ALL: {e}")
+            pass
     else:
         try:
             idx = int(parts[1])
             r, g, b = map(int, parts[2].split(","))
             set_pixel(idx, r, g, b)
         except Exception as e:
-            dbg(f"Error parsing LED:i: {e}")
+            pass
 
 buf = b""
 
@@ -111,10 +93,8 @@ while True:
     for i, btn in enumerate(buttons):
         cur = btn.value  # False = not pressed, True = pressed (due to Pull.DOWN + 3V3)
         if cur != last_states[i]:
-            dbg(f"Button {i+1} state change: {last_states[i]} -> {cur}")
             # "Click" = edge from False -> True
             if (not last_states[i]) and cur:
-                dbg(f"Button {i+1} pressed (edge detected)")
                 send_event(f"BTN:{i+1}")
         last_states[i] = cur
 
@@ -130,9 +110,8 @@ while True:
                         try:
                             parse_host_command(line.decode("utf-8"))
                         except Exception as e:
-                            dbg(f"Error processing line: {e}")
+                            pass
         except (AttributeError, OSError) as e:
-            # Ignore errors when port is not available
             pass
 
     time.sleep(0.01)
