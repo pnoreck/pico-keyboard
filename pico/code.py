@@ -66,6 +66,44 @@ def set_pixel(i, r, g, b):
     if 0 <= i < NUM_PIXELS:
         pixels[i] = (r, g, b)
 
+# Animation state
+animating = False
+anim_color = (0, 0, 0)
+anim_led = 0
+anim_start_time = 0
+
+def start_pulse_animation(led_idx, r, g, b):
+    global animating, anim_color, anim_led, anim_start_time
+    animating = True
+    anim_color = (r, g, b)
+    anim_led = led_idx
+    anim_start_time = time.monotonic()
+
+def stop_animation():
+    global animating
+    animating = False
+
+def update_animation():
+    global animating, anim_color, anim_led, anim_start_time
+    if not animating:
+        return
+    
+    # Pulse animation: fade in and out
+    elapsed = time.monotonic() - anim_start_time
+    # 2 second cycle (1 second fade in, 1 second fade out)
+    cycle = elapsed % 2.0
+    if cycle < 1.0:
+        # Fade in
+        brightness = cycle
+    else:
+        # Fade out
+        brightness = 2.0 - cycle
+    
+    r = int(anim_color[0] * brightness)
+    g = int(anim_color[1] * brightness)
+    b = int(anim_color[2] * brightness)
+    set_pixel(anim_led, r, g, b)
+
 def parse_host_command(line: str):
     line = line.strip()
     parts = line.split(":")
@@ -76,13 +114,28 @@ def parse_host_command(line: str):
         try:
             r, g, b = map(int, parts[2].split(","))
             pixels.fill((r, g, b))
+            stop_animation()  # Stop animation when ALL is used
         except Exception as e:
             pass
+    elif parts[1] == "ANIM":
+        # LED:ANIM:led_idx:r,g,b - Start pulse animation on specific LED
+        try:
+            led_idx = int(parts[2])
+            r, g, b = map(int, parts[3].split(","))
+            start_pulse_animation(led_idx, r, g, b)
+        except Exception as e:
+            pass
+    elif parts[1] == "STOP":
+        # LED:STOP - Stop any running animation
+        stop_animation()
     else:
         try:
             idx = int(parts[1])
             r, g, b = map(int, parts[2].split(","))
             set_pixel(idx, r, g, b)
+            # Stop animation if we're setting the animated LED
+            if animating and anim_led == idx:
+                stop_animation()
         except Exception as e:
             pass
 
@@ -98,7 +151,10 @@ while True:
                 send_event(f"BTN:{i+1}")
         last_states[i] = cur
 
-    # 2. Read host commands
+    # 2. Update animations
+    update_animation()
+
+    # 3. Read host commands
     if evt_ser is not None:
         try:
             if evt_ser.in_waiting > 0:
