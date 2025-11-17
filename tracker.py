@@ -8,12 +8,13 @@ from datetime import datetime
 try:
     import serial  # pip install pyserial
 except ImportError:
-    print("Bitte zuerst installieren: pip install pyserial")
+    print("Please install first: pip install pyserial")
     sys.exit(1)
 
-# ----- KONFIG -----
-# Zuordnung Taste -> Label
+# ----- CONFIG -----
+# Mapping button -> label
 KEYMAP = {
+    1: "prevent_sleep",
     2: "tracking_toggle",  # Start/Stop
     3: "Besprechungen",
     4: "Projekt 1",
@@ -22,48 +23,47 @@ KEYMAP = {
     7: "Support",
     8: "show_or_reset",
     9: "layer_toggle",
-    1: "prevent_sleep",
 }
 
 CSV_FILE = "times.csv"
 
-# ----- HILFSFUNKTIONEN FÜR SERIELL -----
+# ----- SERIAL HELPER FUNCTIONS -----
 def find_pico_port():
     candidates = sorted(
         glob.glob("/dev/tty.usbmodem*") + glob.glob("/dev/tty.usbserial*")
     )
     if not candidates:
-        raise RuntimeError("Kein Pico gefunden (/dev/tty.usbmodem*).")
+        raise RuntimeError("No Pico found (/dev/tty.usbmodem*).")
 
-    import serial  # lokal, damit wir SerialException haben
+    import serial  # local, so we have SerialException
     from serial.serialutil import SerialException
 
-    # Wenn mehrere Ports gefunden, bevorzuge den höheren (meist data-Port)
-    # Falls nur einer da ist, nimm den
-    print(f"[INFO] Gefundene Ports: {candidates}")
+    # If multiple ports found, prefer the higher one (usually data port)
+    # If only one exists, take it
+    print(f"[INFO] Found ports: {candidates}")
     
-    # Versuche zuerst den letzten Port (meist data-Port wenn beide aktiv)
+    # Try the last port first (usually data port if both active)
     for port in reversed(candidates):
         try:
-            # kurz testweise öffnen und sofort wieder schließen
+            # briefly open and immediately close for testing
             test = serial.Serial(port, 115200, timeout=0.1)
             test.close()
-            print(f"[INFO] Verwende Port: {port}")
+            print(f"[INFO] Using port: {port}")
             return port
         except SerialException as e:
-            print(f"[WARN] Port {port} nicht nutzbar: {e}")
+            print(f"[WARN] Port {port} not usable: {e}")
     
-    # Fallback: versuche alle in normaler Reihenfolge
+    # Fallback: try all in normal order
     for port in candidates:
         try:
             test = serial.Serial(port, 115200, timeout=0.1)
             test.close()
-            print(f"[INFO] Verwende Port (Fallback): {port}")
+            print(f"[INFO] Using port (fallback): {port}")
             return port
         except SerialException as e:
-            print(f"[WARN] Port {port} nicht nutzbar: {e}")
+            print(f"[WARN] Port {port} not usable: {e}")
 
-    raise RuntimeError("Kein freier Pico-Serial-Port gefunden (alle busy?).")
+    raise RuntimeError("No free Pico serial port found (all busy?).")
 
 
 def send_led_all(ser, r, g, b):
@@ -72,24 +72,24 @@ def send_led_all(ser, r, g, b):
 def send_led(ser, idx, r, g, b):
     ser.write(f"LED:{idx}:{r},{g},{b}\n".encode("utf-8"))
 
-# ----- TIME TRACKING LOGIK -----
+# ----- TIME TRACKING LOGIC -----
 class TimeTracker:
     def __init__(self, csv_file):
         self.csv_file = csv_file
         self.current_task = None
         self.current_start = None
-        # CSV anlegen falls nicht da
+        # Create CSV if it doesn't exist
         if not os.path.exists(csv_file):
             with open(csv_file, "w", newline="") as f:
                 w = csv.writer(f)
                 w.writerow(["start", "end", "label", "duration_seconds"])
 
     def start_task(self, label):
-        # erst alten Task beenden
+        # first stop old task
         self.stop_task()
         self.current_task = label
         self.current_start = time.time()
-        print(f"[TRACK] gestartet: {label} @ {datetime.now().isoformat(timespec='seconds')}")
+        print(f"[TRACK] started: {label} @ {datetime.now().isoformat(timespec='seconds')}")
 
     def stop_task(self):
         if self.current_task is None:
@@ -104,12 +104,13 @@ class TimeTracker:
                 self.current_task,
                 dur
             ])
-        print(f"[TRACK] gestoppt: {self.current_task} ({dur}s)")
+        print(f"[TRACK] stopped: {self.current_task} ({dur}s)")
         self.current_task = None
         self.current_start = None
 
     def show_today(self):
-        # quick&dirty: CSV lesen und heute summieren
+        # quick&dirty: read CSV and sum today
+        # TODO: Looks like it's not working properly yet
         today = datetime.now().date()
         per_label = {}
         with open(self.csv_file, newline="") as f:
@@ -119,37 +120,37 @@ class TimeTracker:
                 if start.date() == today:
                     dur = int(row["duration_seconds"])
                     per_label[row["label"]] = per_label.get(row["label"], 0) + dur
-        print("---- HEUTE ----")
+        print("---- TODAY ----")
         for label, secs in per_label.items():
             mins = secs // 60
             print(f"{label:15s} {mins:4d} min")
         print("---------------")
 
     def reset_today(self):
-        # Minimalistisch: wir legen neue Datei an.
-        # (man könnte auch filtern)
+        # Minimalist: we create a new file.
+        # (could also filter)
         backup = self.csv_file + ".bak"
         if os.path.exists(self.csv_file):
             os.rename(self.csv_file, backup)
         with open(self.csv_file, "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(["start", "end", "label", "duration_seconds"])
-        print("[TRACK] heutige Datei zurückgesetzt (alte in .bak).")
+        print("[TRACK] today's file reset (old one in .bak).")
 
 def main():
     port = find_pico_port()
-    print(f"[INFO] Verbinde zu {port}")
+    print(f"[INFO] Connecting to {port}")
     ser = serial.Serial(port, 115200, timeout=0.1)
     
-    # Warte kurz, damit Verbindung stabilisiert
+    # Wait briefly for connection to stabilize
     time.sleep(0.5)
     
-    # Leere den Eingabepuffer
+    # Clear input buffer
     ser.reset_input_buffer()
     ser.reset_output_buffer()
     
-    print("[INFO] Verbindung hergestellt, warte auf Events...")
-    print("[INFO] Drücke eine Taste auf dem Pico, um zu testen...")
+    print("[INFO] Connection established, waiting for events...")
+    print("[INFO] Press a button on the Pico to test...")
 
     tracker = TimeTracker(CSV_FILE)
 
@@ -157,9 +158,9 @@ def main():
     layer = 1
     last_btn8_time = 0
 
-    # beim Start LEDs löschen
+    # clear LEDs on startup
     send_led_all(ser, 0, 0, 0)
-    ser.flush()  # Stelle sicher, dass Daten gesendet werden
+    ser.flush()  # Ensure data is sent
 
     try:
         while True:
@@ -170,26 +171,26 @@ def main():
 
             line = line.decode("utf-8", errors="ignore").strip()
             
-            # Debug: zeige alle empfangenen Zeilen
+            # Debug: show all received lines
             if line:
-                print(f"[DEBUG] Empfangen: {repr(line)}")
+                print(f"[DEBUG] Received: {repr(line)}")
             
             if not line.startswith("BTN:"):
                 continue
 
             btn_num = int(line.split(":")[1])
             action = KEYMAP.get(btn_num, None)
-            print(f"[EVENT] Taste {btn_num} → {action}")
+            print(f"[EVENT] Button {btn_num} → {action}")
 
             if action == "prevent_sleep":
-                # hier statt Maus-Jiggle einfach caffeinate starten/stoppen
-                # super simpel: wir toggeln nur den Zustand und zeigen LED 0
+                # here instead of mouse jiggle simply start/stop caffeinate
+                # super simple: we just toggle the state and show LED 0
                 prevent_sleep = not prevent_sleep
                 if prevent_sleep:
-                    print("[SLEEP] Aktiv (bitte in echt: subprocess caffeinate)")
-                    send_led(ser, 0, 0, 0, 255)  # blau
+                    print("[SLEEP] Active (please in real: subprocess caffeinate)")
+                    send_led(ser, 0, 0, 0, 255)  # blue
                 else:
-                    print("[SLEEP] Inaktiv")
+                    print("[SLEEP] Inactive")
                     send_led(ser, 0, 0, 0, 0)
 
             elif action == "tracking_toggle":
@@ -197,23 +198,23 @@ def main():
                     tracker.stop_task()
                     send_led_all(ser, 0, 0, 0)
                 else:
-                    # ohne Label starten? dann "Allgemein"
+                    # start without label? then "Allgemein"
                     tracker.start_task("Allgemein")
                     send_led_all(ser, 0, 255, 0)
 
             elif action in ("Besprechungen", "Support", "Projekt 1", "Projekt 2", "Projekt 3"):
                 tracker.start_task(action)
-                # zeig auf LED index 1..5
+                # show on LED index 1..5
                 send_led_all(ser, 0, 0, 0)
-                # wähle LED nach Taste (nur Spielerei)
+                # choose LED by button (just for fun)
                 idx = max(1, min(7, btn_num - 1))
                 send_led(ser, idx, 0, 255, 0)
 
             elif action == "show_or_reset":
                 now = time.time()
-                # kurzer Druck → anzeigen
+                # short press → show
                 if now - last_btn8_time < 1.5:
-                    # zweiter Druck schnell hintereinander = reset
+                    # second press quickly after = reset
                     tracker.reset_today()
                     send_led_all(ser, 255, 0, 0)
                     time.sleep(0.3)
@@ -224,15 +225,15 @@ def main():
 
             elif action == "layer_toggle":
                 layer = 2 if layer == 1 else 1
-                print(f"[LAYER] jetzt {layer}")
-                # zeig layer auf LED 7
+                print(f"[LAYER] now {layer}")
+                # show layer on LED 7
                 if layer == 2:
                     send_led(ser, 7, 255, 255, 0)
                 else:
                     send_led(ser, 7, 0, 0, 0)
 
     except KeyboardInterrupt:
-        print("\n[INFO] Beende, stoppe evtl. laufenden Task…")
+        print("\n[INFO] Exiting, stopping any running task...")
         tracker.stop_task()
         send_led_all(ser, 0, 0, 0)
 

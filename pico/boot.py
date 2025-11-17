@@ -1,5 +1,5 @@
 import usb_cdc
 
 # Console = REPL / Debug
-# Data    = Kanal für dein Mac-Tool (tracker.py)
+# Data    = Channel for your Mac tool (tracker.py)
 usb_cdc.enable(console=True, data=True)
