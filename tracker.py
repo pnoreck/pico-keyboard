@@ -13,6 +13,12 @@ except ImportError:
     print("Please install first: pip install pyserial")
     sys.exit(1)
 
+try:
+    import yaml  # pip install pyyaml
+except ImportError:
+    yaml = None
+    print("[WARN] PyYAML not installed. Config file support disabled. Install with: pip install pyyaml")
+
 # ----- CONFIG -----
 # LED Layout (8 LEDs total):
 #   LED 0: Tracking status (green when tracking, off when not)
@@ -28,9 +34,9 @@ KEYMAP = {
         1: {"action": "tracking_toggle"},
         2: {"action": "project", "label": "Support", "color": (255, 255, 0)},  # Yellow
         3: {"action": "project", "label": "Meeting", "color": (255, 100, 0)},  # Orange
-        4: {"action": "project", "label": "Projekt 1", "color": (0, 255, 0)},  # Green
-        5: {"action": "project", "label": "Projekt 2", "color": (0, 0, 255)},  # Blue
-        6: {"action": "project", "label": "Projekt 3", "color": (255, 0, 255)},  # Magenta
+        4: {"action": "project", "label": "Project 1", "color": (0, 255, 0)},  # Green
+        5: {"action": "project", "label": "Project 2", "color": (0, 0, 255)},  # Blue
+        6: {"action": "project", "label": "Project 3", "color": (255, 0, 255)},  # Magenta
         7: {"action": "project", "label": "Project 4", "color": (255, 0, 128)},  # Pink
         8: {"action": "show_today"},
         9: {"action": "layer_shift"},  # Layer shift key - toggles to layer 1
@@ -47,6 +53,60 @@ KEYMAP = {
         9: {"action": "layer_shift"},  # Layer shift key - toggles back to layer 0
     }
 }
+
+# ----- CONFIG FILE LOADING -----
+def load_project_config():
+    """Load project labels from config.yaml if it exists and update KEYMAP"""
+    if yaml is None:
+        return  # PyYAML not available
+    
+    config_file = "config.yaml"
+    if not os.path.exists(config_file):
+        return  # Config file doesn't exist, use defaults
+    
+    try:
+        with open(config_file, "r") as f:
+            config = yaml.safe_load(f)
+        
+        if not config or "projects" not in config:
+            return  # Invalid config structure
+        
+        projects = config["projects"]
+        
+        # Update labels for Project 1-11
+        # Project 1-3 are in layer 0, buttons 4-6
+        # Project 4 is in layer 0, button 7
+        # Project 5-11 are in layer 1, buttons 1-7
+        
+        project_mapping = [
+            (0, 4, 1),  # Layer 0, Button 4 -> Project 1
+            (0, 5, 2),  # Layer 0, Button 5 -> Project 2
+            (0, 6, 3),  # Layer 0, Button 6 -> Project 3
+            (0, 7, 4),  # Layer 0, Button 7 -> Project 4
+            (1, 1, 5),  # Layer 1, Button 1 -> Project 5
+            (1, 2, 6),  # Layer 1, Button 2 -> Project 6
+            (1, 3, 7),  # Layer 1, Button 3 -> Project 7
+            (1, 4, 8),  # Layer 1, Button 4 -> Project 8
+            (1, 5, 9),  # Layer 1, Button 5 -> Project 9
+            (1, 6, 10), # Layer 1, Button 6 -> Project 10
+            (1, 7, 11), # Layer 1, Button 7 -> Project 11
+        ]
+        
+        for layer, button, project_num in project_mapping:
+            project_key = str(project_num)
+            if project_key in projects:
+                new_label = projects[project_key]
+                if layer in KEYMAP and button in KEYMAP[layer]:
+                    if KEYMAP[layer][button].get("action") == "project":
+                        KEYMAP[layer][button]["label"] = new_label
+                        print(f"[CONFIG] Updated Project {project_num} label to: {new_label}")
+        
+    except Exception as e:
+        print(f"[WARN] Error loading config.yaml: {e}")
+        print("[WARN] Using default project labels")
+
+# Load config on import
+load_project_config()
 
 # CSV files are created per day: times.YYMMDD.csv
 

@@ -210,3 +210,6 @@ __marimo__/
 times.csv
 *.bak
 *.csv
+
+# Project configuration (contains real project names)
+config.yaml

@@ -1,0 +1,18 @@
+# Project Label Configuration
+# Copy this file to config.yaml and customize with your real project names
+# The config.yaml file is ignored by git to keep your project names private
+#
+# Map project numbers (1-11) to their display labels
+projects:
+  "1": "Project 1"  # Replace with your actual project name
+  "2": "Project 2"  # Replace with your actual project name
+  "3": "Project 3"  # Replace with your actual project name
+  "4": "Project 4"  # Replace with your actual project name
+  "5": "Project 5"  # Replace with your actual project name
+  "6": "Project 6"  # Replace with your actual project name
+  "7": "Project 7"  # Replace with your actual project name
+  "8": "Project 8"  # Replace with your actual project name
+  "9": "Project 9"  # Replace with your actual project name
+  "10": "Project 10"  # Replace with your actual project name
+  "11": "Project 11"  # Replace with your actual project name
+
