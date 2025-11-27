@@ -109,6 +109,8 @@ def load_project_config():
 load_project_config()
 
 # CSV files are created per day: times.YYMMDD.csv
+# Format: Each row is a button press with timestamp and label
+# Duration is calculated as difference to next entry when reading
 
 # ----- SERIAL HELPER FUNCTIONS -----
 def find_pico_port():
@@ -164,6 +166,50 @@ def send_led_stop_anim(ser):
     """Stop any running animation"""
     ser.write(f"LED:STOP\n".encode("utf-8"))
 
+# ----- KEY GRID DISPLAY -----
+def get_key_label(layer, button):
+    """Get the display label for a key in the given layer"""
+    config = KEYMAP.get(layer, {}).get(button, {})
+    action = config.get("action", "")
+    if action == "project":
+        return config.get("label", "Project")
+    elif action == "tracking_toggle":
+        return "Toggle"
+    elif action == "show_today":
+        return "Today"
+    elif action == "layer_shift":
+        return "Layer"
+    elif action == "prevent_sleep":
+        return "Caffeine"
+    return "?"
+
+def print_key_grid():
+    """Print a 3x3 grid showing key labels for both layers"""
+    # Button layout in 3x3 grid (buttons 1-9)
+    # Row 1: 1, 2, 3
+    # Row 2: 4, 5, 6
+    # Row 3: 7, 8, 9
+
+    col_width = 25
+
+    for layer in [0, 1]:
+        print(f"\n┌{'─' * (col_width * 3 + 4)}┐")
+        print(f"│{f'Layer {layer}':^{col_width * 3 + 4}}│")
+        print(f"├{'─' * col_width}┬{'─' * col_width}┬{'─' * col_width}┤")
+
+        for row in range(3):
+            labels = []
+            for col in range(3):
+                btn = row * 3 + col + 1
+                label = get_key_label(layer, btn)
+                labels.append(f"{label:^{col_width}}")
+            print(f"│{'│'.join(labels)}│")
+
+            if row < 2:
+                print(f"├{'─' * col_width}┼{'─' * col_width}┼{'─' * col_width}┤")
+
+        print(f"└{'─' * col_width}┴{'─' * col_width}┴{'─' * col_width}┘")
+
 # ----- TIME TRACKING LOGIC -----
 def get_csv_filename():
     """Get the CSV filename for today's date in format times.YYMMDD.csv"""
@@ -173,9 +219,25 @@ def get_csv_filename():
 class TimeTracker:
     def __init__(self):
         self.current_task = None
-        self.current_start = None
         self.current_csv_file = None
         self._ensure_csv_file()
+        self._restore_state()
+
+    def _restore_state(self):
+        """Restore current_task from CSV if there's an active task (no STOP after last entry)"""
+        if not os.path.exists(self.current_csv_file):
+            return
+
+        last_label = None
+        with open(self.current_csv_file, newline="") as f:
+            r = csv.DictReader(f)
+            for row in r:
+                last_label = row["label"]
+
+        # If last entry is not STOP, there's an active task
+        if last_label and last_label != "STOP":
+            self.current_task = last_label
+            print(f"[TRACK] Restored active task: {last_label}")
 
     def _ensure_csv_file(self):
         """Ensure the CSV file for today exists and update current_csv_file"""
@@ -183,95 +245,98 @@ class TimeTracker:
         if not os.path.exists(self.current_csv_file):
             with open(self.current_csv_file, "w", newline="") as f:
                 w = csv.writer(f)
-                w.writerow(["start", "end", "label", "duration_seconds"])
+                w.writerow(["timestamp", "label"])
 
-    def _check_day_change(self, stop_current_task=False):
+    def _check_day_change(self):
         """Check if day has changed and switch to new CSV file if needed"""
         new_csv_file = get_csv_filename()
         if new_csv_file != self.current_csv_file:
-            # Day changed - stop current task if requested and switch files
-            if stop_current_task and self.current_task:
-                # Save current task to old file before switching
-                end = time.time()
-                dur = int(end - self.current_start)
-                with open(self.current_csv_file, "a", newline="") as f:
-                    w = csv.writer(f)
-                    w.writerow([
-                        datetime.fromtimestamp(self.current_start).isoformat(timespec='seconds'),
-                        datetime.fromtimestamp(end).isoformat(timespec='seconds'),
-                        self.current_task,
-                        dur
-                    ])
-                print(f"[TRACK] Day changed - saved {self.current_task} ({dur}s) to {self.current_csv_file}")
-                self.current_task = None
-                self.current_start = None
             self.current_csv_file = new_csv_file
             self._ensure_csv_file()
 
     def start_task(self, label):
-        # Check if day changed (don't stop task, just switch file)
-        self._check_day_change(stop_current_task=False)
-        # first stop old task
-        self.stop_task()
+        """Write a new task entry immediately to CSV"""
+        self._check_day_change()
         self.current_task = label
-        self.current_start = time.time()
-        print(f"[TRACK] started: {label} @ {datetime.now().isoformat(timespec='seconds')}")
-
-    def stop_task(self):
-        if self.current_task is None:
-            return
-        # Check if day changed before writing (don't stop task recursively)
-        self._check_day_change(stop_current_task=False)
-        end = time.time()
-        dur = int(end - self.current_start)
+        now = datetime.now()
         with open(self.current_csv_file, "a", newline="") as f:
             w = csv.writer(f)
-            w.writerow([
-                datetime.fromtimestamp(self.current_start).isoformat(timespec='seconds'),
-                datetime.fromtimestamp(end).isoformat(timespec='seconds'),
-                self.current_task,
-                dur
-            ])
-        print(f"[TRACK] stopped: {self.current_task} ({dur}s)")
+            w.writerow([now.isoformat(timespec='seconds'), label])
+        print(f"[TRACK] started: {label} @ {now.isoformat(timespec='seconds')}")
+
+    def stop_task(self):
+        """Write a STOP entry to mark end of tracking"""
+        if self.current_task is None:
+            return
+        self._check_day_change()
+        now = datetime.now()
+        with open(self.current_csv_file, "a", newline="") as f:
+            w = csv.writer(f)
+            w.writerow([now.isoformat(timespec='seconds'), "STOP"])
+        print(f"[TRACK] stopped @ {now.isoformat(timespec='seconds')}")
         self.current_task = None
-        self.current_start = None
 
     def show_today(self):
-        """Show today's time tracking summary"""
+        """Show today's time tracking summary by calculating durations between entries"""
         csv_file = get_csv_filename()
         if not os.path.exists(csv_file):
             print("---- TODAY ----")
             print("No tracking data for today")
             print("---------------")
             return
-        
+
         today = datetime.now().date()
-        entries = []
-        per_label = {}
-        
+        raw_entries = []
+
         # Read all entries for today
         with open(csv_file, newline="") as f:
             r = csv.DictReader(f)
             for row in r:
-                start = datetime.fromisoformat(row["start"])
-                if start.date() == today:
-                    end = datetime.fromisoformat(row["end"])
-                    dur = int(row["duration_seconds"])
-                    label = row["label"]
-                    entries.append({
-                        "start": start,
-                        "end": end,
-                        "label": label,
-                        "duration": dur
+                ts = datetime.fromisoformat(row["timestamp"])
+                if ts.date() == today:
+                    raw_entries.append({
+                        "timestamp": ts,
+                        "label": row["label"]
                     })
-                    per_label[label] = per_label.get(label, 0) + dur
-        
+
+        if not raw_entries:
+            print("---- TODAY ----")
+            print("No tracking data for today")
+            print("---------------")
+            return
+
+        # Calculate durations: each entry lasts until the next one
+        entries = []
+        per_label = {}
+
+        for i, entry in enumerate(raw_entries):
+            label = entry["label"]
+            if label == "STOP":
+                continue  # STOP entries are just markers, not tasks
+
+            start = entry["timestamp"]
+            # End time is the next entry's timestamp, or now if it's the last entry
+            if i + 1 < len(raw_entries):
+                end = raw_entries[i + 1]["timestamp"]
+            else:
+                end = datetime.now()  # Currently running task
+
+            dur = int((end - start).total_seconds())
+            entries.append({
+                "start": start,
+                "end": end,
+                "label": label,
+                "duration": dur,
+                "is_running": i + 1 >= len(raw_entries)
+            })
+            per_label[label] = per_label.get(label, 0) + dur
+
         # Format duration as "Xm Ys"
         def format_duration(seconds):
             mins = seconds // 60
             secs = seconds % 60
             return f"{mins}m {secs}s"
-        
+
         # First list: All individual entries
         print("---- TODAY - ALL ENTRIES ----")
         if not entries:
@@ -280,10 +345,12 @@ class TimeTracker:
             for entry in entries:
                 start_str = entry["start"].strftime("%H:%M:%S")
                 end_str = entry["end"].strftime("%H:%M:%S")
+                if entry["is_running"]:
+                    end_str = "running"
                 dur_str = format_duration(entry["duration"])
-                print(f"{start_str} - {end_str} | {entry['label']:20s} | {dur_str:>8s}")
+                print(f"{start_str} - {end_str:>8s} | {entry['label']:20s} | {dur_str:>8s}")
         print()
-        
+
         # Second list: Summary by project
         # Sort function: extract number from project name for sorting
         def project_sort_key(item):
@@ -296,7 +363,7 @@ class TimeTracker:
             else:
                 # No number - return (0, label) so non-numbered projects come first
                 return (0, label)
-        
+
         print("---- TODAY - SUMMARY BY PROJECT ----")
         total_secs = 0
         for label, secs in sorted(per_label.items(), key=project_sort_key):
@@ -319,7 +386,8 @@ def main():
     ser.reset_output_buffer()
     
     print("[INFO] Connection established, waiting for events...")
-    print("[INFO] Press a button on the Pico to test...")
+    print_key_grid()
+    print("\n[INFO] Press a button on the Pico to test...")
 
     tracker = TimeTracker()
 
