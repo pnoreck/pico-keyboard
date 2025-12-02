@@ -113,7 +113,7 @@ load_project_config()
 # Duration is calculated as difference to next entry when reading
 
 # ----- SERIAL HELPER FUNCTIONS -----
-def find_pico_port():
+def find_pico_port(port_filter=None):
     candidates = sorted(
         glob.glob("/dev/tty.usbmodem*") + glob.glob("/dev/tty.usbserial*")
     )
@@ -123,21 +123,49 @@ def find_pico_port():
     import serial  # local, so we have SerialException
     from serial.serialutil import SerialException
 
-    # If multiple ports found, prefer the higher one (usually data port)
-    # If only one exists, take it
     print(f"[INFO] Found ports: {candidates}")
-    
-    # Try the last port first (usually data port if both active)
+
+    # Apply port filter if specified (e.g., "usbmodem2022" from config)
+    if port_filter:
+        filtered = [p for p in candidates if port_filter in p]
+        if filtered:
+            print(f"[INFO] Filtered by '{port_filter}': {filtered}")
+            candidates = filtered
+
+    # Pico with dual CDC creates two ports with similar prefixes.
+    # Group by common prefix and prefer groups with 2+ ports.
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for port in candidates:
+        # Extract prefix: /dev/tty.usbmodem20224 -> 20224 (first 5 digits after usbmodem)
+        import re
+        match = re.search(r'usbmodem(\d{5,})', port)
+        if match:
+            prefix = match.group(1)[:5]  # First 5 digits as group key
+            groups[prefix].append(port)
+        else:
+            groups['other'].append(port)
+
+    # Prefer groups with exactly 2 ports (Pico dual CDC pattern)
+    pico_candidates = []
+    for prefix, ports in groups.items():
+        if len(ports) == 2:
+            pico_candidates.extend(ports)
+
+    if pico_candidates:
+        print(f"[INFO] Detected Pico dual CDC ports: {pico_candidates}")
+        candidates = sorted(pico_candidates)
+
+    # Try the last port first (data port is usually higher number)
     for port in reversed(candidates):
         try:
-            # briefly open and immediately close for testing
             test = serial.Serial(port, 115200, timeout=0.1)
             test.close()
             print(f"[INFO] Using port: {port}")
             return port
         except SerialException as e:
             print(f"[WARN] Port {port} not usable: {e}")
-    
+
     # Fallback: try all in normal order
     for port in candidates:
         try:
@@ -374,7 +402,9 @@ class TimeTracker:
         print("------------------------------------")
 
 def main():
-    port = find_pico_port()
+    # Allow port filter via env var: PICO_PORT_FILTER=2022 to match usbmodem2022*
+    port_filter = os.environ.get("PICO_PORT_FILTER")
+    port = find_pico_port(port_filter)
     print(f"[INFO] Connecting to {port}")
     ser = serial.Serial(port, 115200, timeout=0.1)
     
