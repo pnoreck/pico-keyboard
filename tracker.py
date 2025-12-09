@@ -359,10 +359,13 @@ class TimeTracker:
             })
             per_label[label] = per_label.get(label, 0) + dur
 
-        # Format duration as "Xm Ys"
+        # Format duration as "Xh Ym Zs"
         def format_duration(seconds):
-            mins = seconds // 60
+            hours = seconds // 3600
+            mins = (seconds % 3600) // 60
             secs = seconds % 60
+            if hours > 0:
+                return f"{hours}h {mins}m {secs}s"
             return f"{mins}m {secs}s"
 
         # First list: All individual entries
