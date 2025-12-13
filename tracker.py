@@ -113,6 +113,74 @@ load_project_config()
 # Format: Each row is a button press with timestamp and label
 # Duration is calculated as difference to next entry when reading
 
+# ----- PICO FIRMWARE AUTO-UPDATE -----
+CIRCUITPY_PATH = "/Volumes/CIRCUITPY"
+PICO_CODE_FILENAME = "code.py"
+
+def get_script_dir():
+    """Get the directory where this script is located"""
+    return os.path.dirname(os.path.abspath(__file__))
+
+def get_local_pico_code_path():
+    """Get path to local pico/code.py"""
+    return os.path.join(get_script_dir(), "pico", PICO_CODE_FILENAME)
+
+def get_pico_code_path():
+    """Get path to code.py on the mounted CIRCUITPY drive"""
+    return os.path.join(CIRCUITPY_PATH, PICO_CODE_FILENAME)
+
+def is_circuitpy_mounted():
+    """Check if CIRCUITPY drive is mounted"""
+    return os.path.isdir(CIRCUITPY_PATH)
+
+def files_are_identical(path1, path2):
+    """Compare two files by content"""
+    try:
+        with open(path1, "rb") as f1, open(path2, "rb") as f2:
+            return f1.read() == f2.read()
+    except (IOError, OSError):
+        return False
+
+def check_and_update_pico_firmware():
+    """
+    Check if Pico firmware needs updating and copy if necessary.
+    Returns True if update was performed (Pico will restart).
+    """
+    local_code = get_local_pico_code_path()
+    pico_code = get_pico_code_path()
+
+    # Check if local pico/code.py exists
+    if not os.path.exists(local_code):
+        print(f"[WARN] Local firmware not found: {local_code}")
+        return False
+
+    # Check if CIRCUITPY is mounted
+    if not is_circuitpy_mounted():
+        # Not mounted - Pico is probably running normally, which is fine
+        return False
+
+    # Check if code.py exists on Pico
+    if not os.path.exists(pico_code):
+        print("[UPDATE] No code.py on Pico, copying firmware...")
+    elif files_are_identical(local_code, pico_code):
+        print("[UPDATE] Pico firmware is up to date")
+        return False
+    else:
+        print("[UPDATE] Pico firmware differs, updating...")
+
+    # Copy the file
+    try:
+        import shutil
+        shutil.copy2(local_code, pico_code)
+        print("[UPDATE] Firmware copied successfully!")
+        print("[UPDATE] Pico will restart automatically...")
+        # Give the filesystem time to sync and Pico to restart
+        time.sleep(3)
+        return True
+    except (IOError, OSError) as e:
+        print(f"[ERROR] Failed to copy firmware: {e}")
+        return False
+
 # ----- SERIAL HELPER FUNCTIONS -----
 def find_pico_port(port_filter=None):
     candidates = sorted(
@@ -415,6 +483,9 @@ def safe_send(ser, data):
         return False
 
 def main():
+    # Check and update Pico firmware if needed
+    check_and_update_pico_firmware()
+
     # Allow port filter via env var: PICO_PORT_FILTER=2022 to match usbmodem2022*
     port_filter = os.environ.get("PICO_PORT_FILTER")
 
