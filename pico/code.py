@@ -34,6 +34,11 @@ for idx, pin in enumerate(BUTTON_PINS, start=1):
 
 # Initial state: all not pressed
 last_states = [False] * len(buttons)
+# Track when each button was pressed (for long-press detection)
+press_times = [0.0] * len(buttons)
+# Track if we already sent a LONG event for this press
+long_sent = [False] * len(buttons)
+LONG_PRESS_DURATION = 5.0  # seconds
 
 # -------- NEOPIXEL --------
 pixels = neopixel.NeoPixel(
@@ -143,12 +148,24 @@ buf = b""
 
 while True:
     # 1. Query buttons
+    now = time.monotonic()
     for i, btn in enumerate(buttons):
         cur = btn.value  # False = not pressed, True = pressed (due to Pull.DOWN + 3V3)
         if cur != last_states[i]:
             # "Click" = edge from False -> True
             if (not last_states[i]) and cur:
                 send_event(f"BTN:{i+1}")
+                press_times[i] = now
+                long_sent[i] = False
+            # Button released - reset
+            elif last_states[i] and (not cur):
+                press_times[i] = 0.0
+                long_sent[i] = False
+        # Check for long press (button still held)
+        elif cur and press_times[i] > 0 and not long_sent[i]:
+            if now - press_times[i] >= LONG_PRESS_DURATION:
+                send_event(f"BTN:{i+1}:LONG")
+                long_sent[i] = True
         last_states[i] = cur
 
     # 2. Update animations

@@ -9,6 +9,7 @@ import re
 from datetime import datetime
 try:
     import serial  # pip install pyserial
+    from serial.serialutil import SerialException
 except ImportError:
     print("Please install first: pip install pyserial")
     sys.exit(1)
@@ -404,117 +405,164 @@ class TimeTracker:
         print(f"{'TOTAL':20s} | {format_duration(total_secs):>8s}")
         print("------------------------------------")
 
+def safe_send(ser, data):
+    """Safely send data to serial port, returns False if disconnected"""
+    try:
+        ser.write(data.encode("utf-8"))
+        ser.flush()
+        return True
+    except (SerialException, OSError):
+        return False
+
 def main():
     # Allow port filter via env var: PICO_PORT_FILTER=2022 to match usbmodem2022*
     port_filter = os.environ.get("PICO_PORT_FILTER")
-    port = find_pico_port(port_filter)
-    print(f"[INFO] Connecting to {port}")
-    ser = serial.Serial(port, 115200, timeout=0.1)
-    
-    # Wait briefly for connection to stabilize
-    time.sleep(0.5)
-    
-    # Clear input buffer
-    ser.reset_input_buffer()
-    ser.reset_output_buffer()
-    
-    print("[INFO] Connection established, waiting for events...")
-    print_key_grid()
-    print("\n[INFO] Press a button on the Pico to test...")
 
     tracker = TimeTracker()
-
     prevent_sleep = False
     caffeinate_proc = None
     layer = 0  # Start with layer 0 (default)
+    ser = None
+    reconnect_delay = 2.0  # seconds between reconnection attempts
+    user_requested_exit = False
 
-    # clear LEDs on startup
-    send_led_all(ser, 0, 0, 0)
-    ser.flush()  # Ensure data is sent
+    print_key_grid()
+    print("\n[INFO] Hold Layer button for 5 seconds to gracefully unmount keypad")
 
     try:
-        while True:
-            line = ser.readline()
-            if not line:
-                time.sleep(0.01)
-                continue
+        while not user_requested_exit:
+            # Connection loop - try to connect/reconnect
+            if ser is None:
+                try:
+                    port = find_pico_port(port_filter)
+                    print(f"[INFO] Connecting to {port}")
+                    ser = serial.Serial(port, 115200, timeout=0.1)
+                    time.sleep(0.5)
+                    ser.reset_input_buffer()
+                    ser.reset_output_buffer()
+                    print("[INFO] Connection established, waiting for events...")
 
-            line = line.decode("utf-8", errors="ignore").strip()
-            if not line.startswith("BTN:"):
-                continue
+                    # Clear LEDs and restore state on reconnect
+                    safe_send(ser, "LED:ALL:0,0,0\n")
 
-            btn_num = int(line.split(":")[1])
-            
-            # Look up action in the current layer
-            layer_map = KEYMAP.get(layer, {})
-            config = layer_map.get(btn_num, None)
-            
-            if config is None:
-                print(f"[EVENT] Button {btn_num} → no mapping in layer {layer}")
-                continue
-            
-            action = config.get("action")
-            if action == "prevent_sleep":
-                # here instead of mouse jiggle simply start/stop caffeinate
-                # super simple: we just toggle the state and show LED 1
-                prevent_sleep = not prevent_sleep
-                if prevent_sleep:
-                    print("[SLEEP] Active (please in real: subprocess caffeinate)")
-                    caffeinate_proc = subprocess.Popen(["caffeinate", "-dimsu"])
-                    send_led(ser, 1, 0, 0, 255)  # blue on LED 1
-                else:
-                    print("[SLEEP] Inactive")
-                    if caffeinate_proc is not None:
-                        caffeinate_proc.terminate()
-                        caffeinate_proc = None
-                    send_led(ser, 1, 0, 0, 0)  # off on LED 1
+                    # Restore LED state based on current tracking
+                    if tracker.current_task:
+                        safe_send(ser, "LED:0:0,255,0\n")  # Green tracking LED
+                    if layer == 1:
+                        safe_send(ser, "LED:7:255,255,0\n")  # Yellow layer indicator
+                    if prevent_sleep:
+                        safe_send(ser, "LED:1:0,0,255\n")  # Blue sleep LED
 
-            elif action == "tracking_toggle":
-                if tracker.current_task:
-                    tracker.stop_task()
-                    send_led_stop_anim(ser)  # Stop any animation
-                    send_led(ser, 0, 0, 0, 0)  # Turn off tracking LED
-                    send_led(ser, 2, 0, 0, 0)  # Turn off project color LED
-                else:
-                    # start without label? then "Allgemein"
-                    tracker.start_task("Allgemein")
-                    # Use default green color for "Allgemein"
-                    send_led(ser, 0, 0, 255, 0)  # Green on LED 0 (tracking status)
-                    send_led(ser, 2, 0, 255, 0)  # Green on LED 2 (project color)
+                except RuntimeError as e:
+                    print(f"[WARN] {e}")
+                    print(f"[INFO] Retrying in {reconnect_delay} seconds...")
+                    time.sleep(reconnect_delay)
+                    continue
 
-            elif action == "project":
-                # Start tracking a project with its color
-                label = config.get("label", "Unknown Project")
-                color = config.get("color", (0, 255, 0))  # Default to green if no color
-                tracker.start_task(label)
-                # Stop any running animation first
-                send_led_stop_anim(ser)
-                # Show tracking status on LED 0 (green when tracking)
-                send_led(ser, 0, 0, 255, 0)
-                # Show project color on LED 2
-                send_led(ser, 2, color[0], color[1], color[2])
-                print(f"[PROJECT] Started {label} with color {color}")
+            # Main event loop
+            try:
+                line = ser.readline()
+                if not line:
+                    time.sleep(0.01)
+                    continue
 
-            elif action == "show_today":
-                tracker.show_today()
+                line = line.decode("utf-8", errors="ignore").strip()
+                if not line.startswith("BTN:"):
+                    continue
 
-            elif action == "layer_shift":
-                # Toggle between layer 0 and layer 1
-                layer = 1 if layer == 0 else 0
-                print(f"[LAYER] Switched to layer {layer}")
-                # Show layer indicator on LED 7 (doesn't affect other LEDs)
-                if layer == 1:
-                    send_led(ser, 7, 255, 255, 0)  # Yellow when layer 1 is active
-                else:
-                    send_led(ser, 7, 0, 0, 0)  # Off when layer 0 is active
+                parts = line.split(":")
+                btn_num = int(parts[1])
+                is_long_press = len(parts) > 2 and parts[2] == "LONG"
+
+                # Handle long-press on layer_shift button (button 9) for graceful unmount
+                if btn_num == 9 and is_long_press:
+                    print("\n[INFO] Long press detected - unmounting keypad...")
+                    user_requested_exit = True
+                    continue
+
+                # Skip regular button handling for long press events
+                if is_long_press:
+                    continue
+
+                # Look up action in the current layer
+                layer_map = KEYMAP.get(layer, {})
+                config = layer_map.get(btn_num, None)
+
+                if config is None:
+                    print(f"[EVENT] Button {btn_num} → no mapping in layer {layer}")
+                    continue
+
+                action = config.get("action")
+                if action == "prevent_sleep":
+                    prevent_sleep = not prevent_sleep
+                    if prevent_sleep:
+                        print("[SLEEP] Active (please in real: subprocess caffeinate)")
+                        caffeinate_proc = subprocess.Popen(["caffeinate", "-dimsu"])
+                        safe_send(ser, "LED:1:0,0,255\n")
+                    else:
+                        print("[SLEEP] Inactive")
+                        if caffeinate_proc is not None:
+                            caffeinate_proc.terminate()
+                            caffeinate_proc = None
+                        safe_send(ser, "LED:1:0,0,0\n")
+
+                elif action == "tracking_toggle":
+                    if tracker.current_task:
+                        tracker.stop_task()
+                        safe_send(ser, "LED:STOP\n")
+                        safe_send(ser, "LED:0:0,0,0\n")
+                        safe_send(ser, "LED:2:0,0,0\n")
+                    else:
+                        tracker.start_task("Allgemein")
+                        safe_send(ser, "LED:0:0,255,0\n")
+                        safe_send(ser, "LED:2:0,255,0\n")
+
+                elif action == "project":
+                    label = config.get("label", "Unknown Project")
+                    color = config.get("color", (0, 255, 0))
+                    tracker.start_task(label)
+                    safe_send(ser, "LED:STOP\n")
+                    safe_send(ser, "LED:0:0,255,0\n")
+                    safe_send(ser, f"LED:2:{color[0]},{color[1]},{color[2]}\n")
+                    print(f"[PROJECT] Started {label} with color {color}")
+
+                elif action == "show_today":
+                    tracker.show_today()
+
+                elif action == "layer_shift":
+                    layer = 1 if layer == 0 else 0
+                    print(f"[LAYER] Switched to layer {layer}")
+                    if layer == 1:
+                        safe_send(ser, "LED:7:255,255,0\n")
+                    else:
+                        safe_send(ser, "LED:7:0,0,0\n")
+
+            except (SerialException, OSError) as e:
+                print(f"\n[WARN] Connection lost: {e}")
+                print(f"[INFO] Attempting to reconnect in {reconnect_delay} seconds...")
+                try:
+                    ser.close()
+                except:
+                    pass
+                ser = None
+                time.sleep(reconnect_delay)
 
     except KeyboardInterrupt:
-        print("\n[INFO] Exiting, stopping any running task...")
-        tracker.stop_task()
-        send_led_stop_anim(ser)
-        send_led_all(ser, 0, 0, 0)
-        if caffeinate_proc is not None:
-            caffeinate_proc.terminate()
+        print("\n[INFO] Keyboard interrupt received...")
+
+    # Cleanup
+    print("[INFO] Exiting, stopping any running task...")
+    tracker.stop_task()
+    if ser is not None:
+        try:
+            safe_send(ser, "LED:STOP\n")
+            safe_send(ser, "LED:ALL:0,0,0\n")
+            ser.close()
+        except:
+            pass
+    if caffeinate_proc is not None:
+        caffeinate_proc.terminate()
+    print("[INFO] Goodbye!")
 
 if __name__ == "__main__":
     main()
