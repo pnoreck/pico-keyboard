@@ -182,15 +182,44 @@ def check_and_update_pico_firmware():
         return False
 
 # ----- SERIAL HELPER FUNCTIONS -----
+EXPECTED_DEVICE_ID = "PICO-KEYPAD-V1"
+
+def ping_device(port, timeout=1.0):
+    """Send PING command and check if device responds with correct ID."""
+    try:
+        ser = serial.Serial(port, 115200, timeout=timeout)
+        time.sleep(0.1)  # Give device time to initialize
+        ser.reset_input_buffer()  # Clear any pending data
+        ser.write(b"PING\n")
+        ser.flush()
+
+        # Wait for response
+        start = time.time()
+        buf = b""
+        while time.time() - start < timeout:
+            if ser.in_waiting > 0:
+                buf += ser.read(ser.in_waiting)
+                if b"\n" in buf:
+                    break
+            time.sleep(0.05)
+
+        ser.close()
+
+        # Check response
+        response = buf.decode("utf-8", errors="ignore").strip()
+        if response.startswith(f"PONG:{EXPECTED_DEVICE_ID}"):
+            return True
+        return False
+    except SerialException:
+        return False
+
+
 def find_pico_port(port_filter=None):
     candidates = sorted(
         glob.glob("/dev/tty.usbmodem*") + glob.glob("/dev/tty.usbserial*")
     )
     if not candidates:
         raise RuntimeError("No Pico found (/dev/tty.usbmodem*).")
-
-    import serial  # local, so we have SerialException
-    from serial.serialutil import SerialException
 
     print(f"[INFO] Found ports: {candidates}")
 
@@ -207,7 +236,6 @@ def find_pico_port(port_filter=None):
     groups = defaultdict(list)
     for port in candidates:
         # Extract prefix: /dev/tty.usbmodem20224 -> 20224 (first 5 digits after usbmodem)
-        import re
         match = re.search(r'usbmodem(\d{5,})', port)
         if match:
             prefix = match.group(1)[:5]  # First 5 digits as group key
@@ -225,27 +253,20 @@ def find_pico_port(port_filter=None):
         print(f"[INFO] Detected Pico dual CDC ports: {pico_candidates}")
         candidates = sorted(pico_candidates)
 
-    # Try the last port first (data port is usually higher number)
+    # Try to identify the correct device using PING
+    # Try data port first (higher number in dual CDC setup)
     for port in reversed(candidates):
         try:
-            test = serial.Serial(port, 115200, timeout=0.1)
-            test.close()
-            print(f"[INFO] Using port: {port}")
-            return port
+            print(f"[INFO] Pinging {port}...")
+            if ping_device(port):
+                print(f"[INFO] Found keypad on {port}")
+                return port
+            else:
+                print(f"[INFO] {port} is not the keypad")
         except SerialException as e:
             print(f"[WARN] Port {port} not usable: {e}")
 
-    # Fallback: try all in normal order
-    for port in candidates:
-        try:
-            test = serial.Serial(port, 115200, timeout=0.1)
-            test.close()
-            print(f"[INFO] Using port (fallback): {port}")
-            return port
-        except SerialException as e:
-            print(f"[WARN] Port {port} not usable: {e}")
-
-    raise RuntimeError("No free Pico serial port found (all busy?).")
+    raise RuntimeError(f"No Pico keypad found. Make sure the device responds to PING with PONG:{EXPECTED_DEVICE_ID}")
 
 
 def send_led_all(ser, r, g, b):

@@ -4,6 +4,20 @@ import digitalio
 import neopixel
 import usb_cdc
 
+# -------- BUTTON REMAP --------
+# Check if button_remap.txt exists - if so, swap buttons 7 and 9
+# (for boards with soldering mistakes)
+BUTTON_REMAP = {}
+try:
+    with open("/button_remap.txt", "r") as f:
+        # File exists, apply the remap
+        BUTTON_REMAP = {7: 9, 9: 7}
+except OSError:
+    pass  # File doesn't exist, no remap needed
+
+def remap_button(btn_num):
+    return BUTTON_REMAP.get(btn_num, btn_num)
+
 # -------- PIN CONFIG --------
 BUTTON_PINS = [
     board.GP11,  # Button 1
@@ -109,9 +123,17 @@ def update_animation():
     b = int(anim_color[2] * brightness)
     set_pixel(anim_led, r, g, b)
 
+DEVICE_ID = "PICO-KEYPAD-V1"
+
 def parse_host_command(line: str):
     line = line.strip()
     parts = line.split(":")
+
+    # Handle PING command for device identification
+    if parts[0] == "PING":
+        send_event(f"PONG:{DEVICE_ID}")
+        return
+
     if not parts or parts[0] != "LED":
         return
 
@@ -154,7 +176,7 @@ while True:
         if cur != last_states[i]:
             # "Click" = edge from False -> True
             if (not last_states[i]) and cur:
-                send_event(f"BTN:{i+1}")
+                send_event(f"BTN:{remap_button(i+1)}")
                 press_times[i] = now
                 long_sent[i] = False
             # Button released - reset
@@ -164,7 +186,7 @@ while True:
         # Check for long press (button still held)
         elif cur and press_times[i] > 0 and not long_sent[i]:
             if now - press_times[i] >= LONG_PRESS_DURATION:
-                send_event(f"BTN:{i+1}:LONG")
+                send_event(f"BTN:{remap_button(i+1)}:LONG")
                 long_sent[i] = True
         last_states[i] = cur
 
