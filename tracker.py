@@ -395,59 +395,16 @@ class TimeTracker:
         self.current_task = None
 
     def show_today(self):
-        """Show today's time tracking summary by calculating durations between entries"""
-        csv_file = get_csv_filename()
-        if not os.path.exists(csv_file):
-            print("---- TODAY ----")
-            print("No tracking data for today")
-            print("---------------")
+        """Show time tracking summary for all available days, sorted by date"""
+        # Find all times.*.csv files
+        csv_files = sorted(glob.glob("times.*.csv"))
+
+        if not csv_files:
+            print("---- SUMMARY ----")
+            print("No tracking data found")
+            print("-----------------")
+            print_key_grid()
             return
-
-        today = datetime.now().date()
-        raw_entries = []
-
-        # Read all entries for today
-        with open(csv_file, newline="") as f:
-            r = csv.DictReader(f)
-            for row in r:
-                ts = datetime.fromisoformat(row["timestamp"])
-                if ts.date() == today:
-                    raw_entries.append({
-                        "timestamp": ts,
-                        "label": row["label"]
-                    })
-
-        if not raw_entries:
-            print("---- TODAY ----")
-            print("No tracking data for today")
-            print("---------------")
-            return
-
-        # Calculate durations: each entry lasts until the next one
-        entries = []
-        per_label = {}
-
-        for i, entry in enumerate(raw_entries):
-            label = entry["label"]
-            if label == "STOP":
-                continue  # STOP entries are just markers, not tasks
-
-            start = entry["timestamp"]
-            # End time is the next entry's timestamp, or now if it's the last entry
-            if i + 1 < len(raw_entries):
-                end = raw_entries[i + 1]["timestamp"]
-            else:
-                end = datetime.now()  # Currently running task
-
-            dur = int((end - start).total_seconds())
-            entries.append({
-                "start": start,
-                "end": end,
-                "label": label,
-                "duration": dur,
-                "is_running": i + 1 >= len(raw_entries)
-            })
-            per_label[label] = per_label.get(label, 0) + dur
 
         # Format duration as "Xh Ym Zs"
         def format_duration(seconds):
@@ -458,21 +415,6 @@ class TimeTracker:
                 return f"{hours}h {mins}m {secs}s"
             return f"{mins}m {secs}s"
 
-        # First list: All individual entries
-        print("---- TODAY - ALL ENTRIES ----")
-        if not entries:
-            print("No entries")
-        else:
-            for entry in entries:
-                start_str = entry["start"].strftime("%H:%M:%S")
-                end_str = entry["end"].strftime("%H:%M:%S")
-                if entry["is_running"]:
-                    end_str = "running"
-                dur_str = format_duration(entry["duration"])
-                print(f"{start_str} - {end_str:>8s} | {entry['label']:20s} | {dur_str:>8s}")
-        print()
-
-        # Second list: Summary by project
         # Sort function: extract number from project name for sorting
         def project_sort_key(item):
             label = item[0]
@@ -485,14 +427,98 @@ class TimeTracker:
                 # No number - return (0, label) so non-numbered projects come first
                 return (0, label)
 
-        print("---- TODAY - SUMMARY BY PROJECT ----")
-        total_secs = 0
-        for label, secs in sorted(per_label.items(), key=project_sort_key):
-            dur_str = format_duration(secs)
-            total_secs += secs
-            print(f"{label:20s} | {dur_str:>8s}")
-        print(f"{'TOTAL':20s} | {format_duration(total_secs):>8s}")
-        print("------------------------------------")
+        # Extract date from filename and sort
+        def extract_date(filename):
+            # times.YYMMDD.csv -> YYMMDD
+            match = re.search(r'times\.(\d{6})\.csv', filename)
+            if match:
+                return match.group(1)
+            return "000000"
+
+        csv_files = sorted(csv_files, key=extract_date)
+
+        # Process each file
+        for csv_file in csv_files:
+            # Extract date for display
+            date_str = extract_date(csv_file)
+            if date_str != "000000":
+                # Format as DD.MM.YY
+                display_date = f"{date_str[4:6]}.{date_str[2:4]}.{date_str[0:2]}"
+            else:
+                display_date = csv_file
+
+            raw_entries = []
+
+            # Read all entries
+            with open(csv_file, newline="") as f:
+                r = csv.DictReader(f)
+                for row in r:
+                    ts = datetime.fromisoformat(row["timestamp"])
+                    raw_entries.append({
+                        "timestamp": ts,
+                        "label": row["label"]
+                    })
+
+            if not raw_entries:
+                continue
+
+            # Calculate durations: each entry lasts until the next one
+            entries = []
+            per_label = {}
+            today = datetime.now().date()
+
+            for i, entry in enumerate(raw_entries):
+                label = entry["label"]
+                if label == "STOP":
+                    continue  # STOP entries are just markers, not tasks
+
+                start = entry["timestamp"]
+                # End time is the next entry's timestamp, or now if it's the last entry
+                if i + 1 < len(raw_entries):
+                    end = raw_entries[i + 1]["timestamp"]
+                else:
+                    # Only use "now" if this is today's file
+                    if start.date() == today:
+                        end = datetime.now()  # Currently running task
+                    else:
+                        continue  # Skip incomplete entries from past days
+
+                dur = int((end - start).total_seconds())
+                entries.append({
+                    "start": start,
+                    "end": end,
+                    "label": label,
+                    "duration": dur,
+                    "is_running": i + 1 >= len(raw_entries) and start.date() == today
+                })
+                per_label[label] = per_label.get(label, 0) + dur
+
+            if not entries:
+                continue
+
+            # First list: All individual entries
+            print(f"\n---- {display_date} - ALL ENTRIES ----")
+            for entry in entries:
+                start_str = entry["start"].strftime("%H:%M:%S")
+                end_str = entry["end"].strftime("%H:%M:%S")
+                if entry["is_running"]:
+                    end_str = "running"
+                dur_str = format_duration(entry["duration"])
+                print(f"{start_str} - {end_str:>8s} | {entry['label']:20s} | {dur_str:>8s}")
+            print()
+
+            # Second list: Summary by project
+            print(f"---- {display_date} - SUMMARY BY PROJECT ----")
+            total_secs = 0
+            for label, secs in sorted(per_label.items(), key=project_sort_key):
+                dur_str = format_duration(secs)
+                total_secs += secs
+                print(f"{label:20s} | {dur_str:>8s}")
+            print(f"{'TOTAL':20s} | {format_duration(total_secs):>8s}")
+            print("------------------------------------")
+
+        # Print key grid at the end
+        print_key_grid()
 
 def safe_send(ser, data):
     """Safely send data to serial port, returns False if disconnected"""
