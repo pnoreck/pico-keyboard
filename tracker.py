@@ -530,6 +530,12 @@ def safe_send(ser, data):
         return False
 
 def main():
+    # Check for --summary flag
+    if len(sys.argv) > 1 and sys.argv[1] in ("--summary", "-s"):
+        tracker = TimeTracker()
+        tracker.show_today()
+        return
+
     # Check and update Pico firmware if needed
     check_and_update_pico_firmware()
 

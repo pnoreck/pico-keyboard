@@ -114,6 +114,19 @@ Or use the provided launcher script (which handles virtual environments):
 ./run_tracker.sh
 ```
 
+### Command-Line Options
+
+Show a summary of all tracked time and exit:
+```bash
+python3 tracker.py --summary
+# or
+python3 tracker.py -s
+```
+
+This displays all entries and per-project summaries for all tracking files without connecting to the Pico.
+
+### Normal Operation
+
 The tracker will:
 1. Automatically find and connect to your Pico
 2. Load project labels from `config.yaml` if it exists
