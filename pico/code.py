@@ -5,15 +5,26 @@ import neopixel
 import usb_cdc
 
 # -------- BUTTON REMAP --------
-# Check if button_remap.txt exists - if so, swap buttons 7 and 9
-# (for boards with soldering mistakes)
+# Load key map from .key_map file if it exists
+# Format: raw_button:logical_button (one per line)
+# This allows each keypad to have its own button mapping
+# regardless of how the buttons are wired.
 BUTTON_REMAP = {}
 try:
-    with open("/button_remap.txt", "r") as f:
-        # File exists, apply the remap
-        BUTTON_REMAP = {7: 9, 9: 7}
+    with open("/.key_map", "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(":")
+            if len(parts) == 2:
+                raw_btn = int(parts[0])
+                logical_btn = int(parts[1])
+                BUTTON_REMAP[raw_btn] = logical_btn
 except OSError:
     pass  # File doesn't exist, no remap needed
+except (ValueError, IndexError):
+    pass  # Invalid file format, skip
 
 def remap_button(btn_num):
     return BUTTON_REMAP.get(btn_num, btn_num)
