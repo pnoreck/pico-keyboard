@@ -239,6 +239,37 @@ def calibrate():
             print("[INFO] Keeping existing key map.")
             return True
 
+        # Delete existing key map and prompt for reset
+        # The Pico loads the key map at startup, so we need to reset it
+        # to get raw button numbers during calibration
+        key_map_path = get_key_map_path()
+        try:
+            os.remove(key_map_path)
+            print(f"[INFO] Deleted existing key map: {key_map_path}")
+        except Exception as e:
+            print(f"[WARN] Could not delete key map: {e}")
+
+        print()
+        print("=" * 50)
+        print("  IMPORTANT: Please reset the Pico now!")
+        print("  (Unplug and replug the USB cable)")
+        print("=" * 50)
+        print()
+        input("Press Enter after resetting the Pico...")
+        print()
+
+        # Wait for CIRCUITPY to remount
+        print("[INFO] Waiting for CIRCUITPY to mount...")
+        for _ in range(30):
+            if is_circuitpy_mounted():
+                break
+            time.sleep(0.5)
+        else:
+            print("[ERROR] CIRCUITPY did not remount in time.")
+            return False
+        print("[INFO] CIRCUITPY mounted.")
+        time.sleep(1)  # Give it a moment to stabilize
+
     # Find and connect to Pico
     try:
         port = find_pico_port()
