@@ -529,11 +529,99 @@ def safe_send(ser, data):
     except (SerialException, OSError):
         return False
 
+def get_all_projects():
+    """Collect all project labels from both layers of the KEYMAP"""
+    projects = []
+    for layer in sorted(KEYMAP.keys()):
+        for btn in sorted(KEYMAP[layer].keys()):
+            config = KEYMAP[layer][btn]
+            if config.get("action") == "project":
+                label = config.get("label", "Unknown")
+                if label not in projects:
+                    projects.append(label)
+    return projects
+
+def menu_mode():
+    """Run time tracker in interactive terminal menu mode (no Pico required)"""
+    tracker = TimeTracker()
+    prevent_sleep = False
+    caffeinate_proc = None
+    projects = get_all_projects()
+
+    print("\n=== Time Tracker (Menu Mode) ===\n")
+    print_key_grid()
+
+    try:
+        while True:
+            # Build menu
+            print()
+            if tracker.current_task:
+                print(f"  Currently tracking: {tracker.current_task}")
+            else:
+                print("  Not tracking")
+            print()
+            print("  [0] Stop tracking" if tracker.current_task else "  [0] Start tracking (General)")
+            for i, label in enumerate(projects, 1):
+                marker = " *" if tracker.current_task == label else ""
+                print(f"  [{i}] {label}{marker}")
+            print(f"  [s] Show summary")
+            sleep_label = "Disable" if prevent_sleep else "Enable"
+            print(f"  [c] {sleep_label} prevent sleep (caffeinate)")
+            print(f"  [q] Quit")
+            print()
+
+            try:
+                choice = input("  > ").strip().lower()
+            except EOFError:
+                break
+
+            if choice == "q":
+                break
+            elif choice == "s":
+                tracker.show_today()
+            elif choice == "c":
+                prevent_sleep = not prevent_sleep
+                if prevent_sleep:
+                    caffeinate_proc = subprocess.Popen(["caffeinate", "-dimsu"])
+                    print("[SLEEP] Prevent sleep enabled")
+                else:
+                    if caffeinate_proc is not None:
+                        caffeinate_proc.terminate()
+                        caffeinate_proc = None
+                    print("[SLEEP] Prevent sleep disabled")
+            elif choice == "0":
+                if tracker.current_task:
+                    tracker.stop_task()
+                else:
+                    tracker.start_task("Allgemein")
+            elif choice.isdigit():
+                idx = int(choice)
+                if 1 <= idx <= len(projects):
+                    tracker.start_task(projects[idx - 1])
+                else:
+                    print("[WARN] Invalid selection")
+            else:
+                print("[WARN] Invalid input")
+
+    except KeyboardInterrupt:
+        print("\n[INFO] Keyboard interrupt received...")
+
+    # Cleanup
+    tracker.stop_task()
+    if caffeinate_proc is not None:
+        caffeinate_proc.terminate()
+    print("[INFO] Goodbye!")
+
 def main():
     # Check for --summary flag
     if len(sys.argv) > 1 and sys.argv[1] in ("--summary", "-s"):
         tracker = TimeTracker()
         tracker.show_today()
+        return
+
+    # Check for --no-pico flag (menu mode)
+    if len(sys.argv) > 1 and sys.argv[1] in ("--no-pico", "-n"):
+        menu_mode()
         return
 
     # Check and update Pico firmware if needed
