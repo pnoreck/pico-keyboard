@@ -40,13 +40,12 @@ A physical time tracking system using a Raspberry Pi Pico with buttons and RGB L
 
 ### Python Dependencies
 
-```bash
-pip install pyserial pyyaml
-```
+Listed in `requirements.txt` (pyserial, pyyaml). The launcher `run_tracker.sh` creates a `.venv`
+and installs them automatically, so normally there is nothing to do by hand. For a manual setup:
 
-Or install from requirements (if you create one):
 ```bash
-pip install -r requirements.txt
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
 
 ### Pico Firmware Setup
@@ -64,7 +63,7 @@ The Pico will automatically run `code.py` on boot and communicate via USB serial
 
 2. **Install Python dependencies:**
    ```bash
-   pip install pyserial pyyaml
+   ./run_tracker.sh   # creates .venv and installs requirements.txt on first run
    ```
 
 3. **Set up your Pico:**
@@ -100,30 +99,40 @@ projects:
 
 The `config.yaml` file is automatically ignored by git (see `.gitignore`), so your real project names stay private.
 
+### Data Directory
+
+By default the CSV files are written next to `tracker.py`. To keep them outside the repository
+checkout (for example in a synced folder), set `data_dir` in `config.yaml`:
+
+```yaml
+data_dir: ~/Documents/timelog
+```
+
+The directory is created on first use. Move any existing `times.*.csv` files there by hand.
+
 ## Usage
 
 ### Starting the Tracker
 
-Run the tracker script:
-```bash
-python3 tracker.py
-```
-
-Or use the provided launcher script (which handles virtual environments):
+Use the launcher script. It creates the `.venv` on first run, rebuilds it after a Homebrew
+Python upgrade broke it, and installs missing dependencies:
 ```bash
 ./run_tracker.sh
 ```
 
+Running `python3 tracker.py` directly also works if pyserial and pyyaml are available to that Python.
+
 ### Command-Line Options
 
-Show a summary of all tracked time and exit:
-```bash
-python3 tracker.py --summary
-# or
-python3 tracker.py -s
-```
+All options are passed through by the launcher (`./run_tracker.sh --summary`):
 
-This displays all entries and per-project summaries for all tracking files without connecting to the Pico.
+| Option | Description |
+|---|---|
+| `-s`, `--summary` | Print all entries and per-project totals for all tracking files, then exit. No Pico needed. |
+| `-n`, `--no-pico` | Interactive menu to start/stop tracking from the terminal, without the Pico. |
+| `-h`, `--help` | Show usage. |
+
+The serial port can be pinned with `PICO_PORT_FILTER=<substring>` when several USB modems are connected.
 
 ### Normal Operation
 
@@ -197,23 +206,26 @@ The 8 LEDs provide visual feedback:
 
 ## Data Storage
 
-Time tracking data is stored in CSV files, one per day:
+Time tracking data is stored in CSV files, one per day, in the data directory
+(next to `tracker.py` unless `data_dir` is set in `config.yaml`):
 
 - Format: `times.YYMMDD.csv`
 - Example: `times.251117.csv` (November 17, 2025)
 
-Each CSV file contains:
-- `start`: ISO timestamp when tracking started
-- `end`: ISO timestamp when tracking ended
-- `label`: Project/task name
-- `duration_seconds`: Duration in seconds
+Each row is one button press:
+- `timestamp`: ISO timestamp of the press
+- `label`: Project/task name, or `STOP` when tracking was stopped
+
+The duration of an entry is the time until the next row. A day whose last row is not `STOP`
+has a running task, which the tracker restores on the next start.
 
 ### CSV Structure
 
 ```csv
-start,end,label,duration_seconds
-2025-11-17T09:00:00,2025-11-17T10:30:00,Project 1,5400
-2025-11-17T10:30:00,2025-11-17T11:15:00,Meeting,2700
+timestamp,label
+2025-11-17T09:00:00,Project 1
+2025-11-17T10:30:00,Meeting
+2025-11-17T11:15:00,STOP
 ```
 
 ## Troubleshooting
@@ -237,11 +249,15 @@ start,end,label,duration_seconds
 - Check power supply (NeoPixels can be power-hungry)
 - Ensure correct number of LEDs is configured (8)
 
+### "pyserial is missing" / PyYAML Warning
+
+- Start via `./run_tracker.sh`; it installs `requirements.txt` into `.venv`
+- A plain `pip install` on macOS usually targets a different Python than the one running the tracker
+
 ### Config File Not Loading
 
 - Ensure `config.yaml` exists in the same directory as `tracker.py`
 - Check YAML syntax is correct (use `config.yaml.example` as reference)
-- Install PyYAML: `pip install pyyaml`
 - Check console output for error messages
 
 ## Development
@@ -254,10 +270,13 @@ Timelog/
 ├── pico/
 │   ├── code.py         # CircuitPython firmware for Pico
 │   └── boot.py         # Boot configuration (if needed)
+├── calibrate_keymap.py # Helper to map physical buttons to numbers
 ├── config.yaml.example # Example configuration file
 ├── config.yaml         # Your actual config (git-ignored)
-├── run_tracker.sh      # Launcher script
-├── times.*.csv         # Time tracking data files
+├── requirements.txt    # Python dependencies
+├── run_tracker.sh      # Launcher script (creates/repairs .venv)
+├── times.*.csv         # Time tracking data files (or in data_dir)
+├── CLAUDE.md           # Notes for Claude Code
 └── README.md           # This file
 ```
 

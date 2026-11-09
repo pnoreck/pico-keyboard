@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import sys
 import time
 import glob
@@ -11,14 +12,14 @@ try:
     import serial  # pip install pyserial
     from serial.serialutil import SerialException
 except ImportError:
-    print("Please install first: pip install pyserial")
+    print("[ERROR] pyserial is missing. Run ./run_tracker.sh, it installs the dependencies into .venv")
     sys.exit(1)
 
 try:
     import yaml  # pip install pyyaml
 except ImportError:
     yaml = None
-    print("[WARN] PyYAML not installed. Config file support disabled. Install with: pip install pyyaml")
+    print("[WARN] PyYAML not installed. Config file support disabled. Run ./run_tracker.sh to install it into .venv")
 
 # ----- CONFIG -----
 # LED Layout (8 LEDs total):
@@ -56,12 +57,17 @@ KEYMAP = {
 }
 
 # ----- CONFIG FILE LOADING -----
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# Directory for the times.YYMMDD.csv files; override with "data_dir" in config.yaml
+DATA_DIR = SCRIPT_DIR
+
 def load_project_config():
-    """Load project labels from config.yaml if it exists and update KEYMAP"""
+    """Load data_dir and project labels from config.yaml (next to this script) if it exists"""
+    global DATA_DIR
     if yaml is None:
         return  # PyYAML not available
     
-    config_file = "config.yaml"
+    config_file = os.path.join(SCRIPT_DIR, "config.yaml")
     if not os.path.exists(config_file):
         return  # Config file doesn't exist, use defaults
     
@@ -69,8 +75,15 @@ def load_project_config():
         with open(config_file, "r") as f:
             config = yaml.safe_load(f)
         
-        if not config or "projects" not in config:
-            return  # Invalid config structure
+        if not config:
+            return  # Empty config, use defaults
+        
+        if config.get("data_dir"):
+            DATA_DIR = os.path.expanduser(os.path.expandvars(str(config["data_dir"])))
+            print(f"[CONFIG] Data directory: {DATA_DIR}")
+        
+        if "projects" not in config:
+            return
         
         projects = config["projects"]
         
@@ -106,8 +119,6 @@ def load_project_config():
         print(f"[WARN] Error loading config.yaml: {e}")
         print("[WARN] Using default project labels")
 
-# Load config on import
-load_project_config()
 
 # CSV files are created per day: times.YYMMDD.csv
 # Format: Each row is a button press with timestamp and label
@@ -119,7 +130,7 @@ PICO_CODE_FILENAME = "code.py"
 
 def get_script_dir():
     """Get the directory where this script is located"""
-    return os.path.dirname(os.path.abspath(__file__))
+    return SCRIPT_DIR
 
 def get_local_pico_code_path():
     """Get path to local pico/code.py"""
@@ -330,9 +341,9 @@ def print_key_grid():
 
 # ----- TIME TRACKING LOGIC -----
 def get_csv_filename():
-    """Get the CSV filename for today's date in format times.YYMMDD.csv"""
+    """Get the full path of today's CSV file (DATA_DIR/times.YYMMDD.csv)"""
     today = datetime.now()
-    return f"times.{today.strftime('%y%m%d')}.csv"
+    return os.path.join(DATA_DIR, f"times.{today.strftime('%y%m%d')}.csv")
 
 class TimeTracker:
     def __init__(self):
@@ -361,6 +372,7 @@ class TimeTracker:
         """Ensure the CSV file for today exists and update current_csv_file"""
         self.current_csv_file = get_csv_filename()
         if not os.path.exists(self.current_csv_file):
+            os.makedirs(DATA_DIR, exist_ok=True)
             with open(self.current_csv_file, "w", newline="") as f:
                 w = csv.writer(f)
                 w.writerow(["timestamp", "label"])
@@ -396,12 +408,12 @@ class TimeTracker:
 
     def show_today(self):
         """Show time tracking summary for all available days, sorted by date"""
-        # Find all times.*.csv files
-        csv_files = sorted(glob.glob("times.*.csv"))
+        # Find all times.*.csv files in the data directory
+        csv_files = sorted(glob.glob(os.path.join(DATA_DIR, "times.*.csv")))
 
         if not csv_files:
             print("---- SUMMARY ----")
-            print("No tracking data found")
+            print(f"No tracking data found in {DATA_DIR}")
             print("-----------------")
             print_key_grid()
             return
@@ -612,15 +624,28 @@ def menu_mode():
         caffeinate_proc.terminate()
     print("[INFO] Goodbye!")
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Hardware time tracker for the Pico button pad",
+        epilog="Set PICO_PORT_FILTER=<substring> to pick a specific /dev/tty.usbmodem* port.",
+    )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("-s", "--summary", action="store_true",
+                      help="print the tracked time of all days and exit (no Pico needed)")
+    mode.add_argument("-n", "--no-pico", action="store_true",
+                      help="interactive menu mode to control tracking without the Pico")
+    return parser.parse_args()
+
 def main():
-    # Check for --summary flag
-    if len(sys.argv) > 1 and sys.argv[1] in ("--summary", "-s"):
+    args = parse_args()
+    load_project_config()
+
+    if args.summary:
         tracker = TimeTracker()
         tracker.show_today()
         return
 
-    # Check for --no-pico flag (menu mode)
-    if len(sys.argv) > 1 and sys.argv[1] in ("--no-pico", "-n"):
+    if args.no_pico:
         menu_mode()
         return
 

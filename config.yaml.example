@@ -16,3 +16,8 @@ projects:
   "10": "Project 10"  # Replace with your actual project name
   "11": "Project 11"  # Replace with your actual project name
 
+
+# Optional: directory for the times.YYMMDD.csv data files.
+# Defaults to the directory of tracker.py. Keep it outside the repo checkout
+# (e.g. a synced folder) so the data survives a fresh clone. "~" is expanded.
+# data_dir: ~/Documents/timelog
