@@ -34,26 +34,26 @@ except ImportError:
 KEYMAP = {
     0: {  # Layer 0 (default)
         1: {"action": "tracking_toggle"},
-        2: {"action": "project", "label": "Support", "color": (255, 255, 0)},  # Yellow
-        3: {"action": "project", "label": "Meeting", "color": (255, 100, 0)},  # Orange
-        4: {"action": "project", "label": "Project 1", "color": (0, 255, 0)},  # Green
+        2: {"action": "project", "label": "Support", "color": (255, 200, 0)},  # Yellow
+        3: {"action": "project", "label": "Meeting", "color": (255, 80, 0)},  # Orange
+        4: {"action": "project", "label": "Project 1", "color": (255, 0, 0)},  # Red
         5: {"action": "project", "label": "Project 2", "color": (0, 0, 255)},  # Blue
-        6: {"action": "project", "label": "Project 3", "color": (255, 0, 255)},  # Magenta
-        7: {"action": "project", "label": "Project 4", "color": (255, 0, 128)},  # Pink
+        6: {"action": "project", "label": "Project 3", "color": (0, 255, 0)},  # Green
+        7: {"action": "project", "label": "Project 4", "color": (255, 0, 255)},  # Magenta
         8: {"action": "show_today"},
         9: {"action": "layer_shift"},  # Layer shift key - toggles to layer 1
     },
     1: {  # Layer 1 (activated by key 9)
-        1: {"action": "project", "label": "Project 5", "color": (128, 255, 0)},  # Lime
-        2: {"action": "project", "label": "Project 6", "color": (0, 255, 128)},  # Cyan-green
-        3: {"action": "project", "label": "Project 7", "color": (128, 0, 255)},  # Purple
-        4: {"action": "project", "label": "Project 8", "color": (255, 128, 0)},  # Orange-red
-        5: {"action": "project", "label": "Project 9", "color": (0, 128, 255)},  # Sky blue
-        6: {"action": "project", "label": "Project 10", "color": (255, 192, 0)},  # Gold
-        7: {"action": "project", "label": "Project 11", "color": (192, 0, 255)},  # Violet
+        1: {"action": "project", "label": "Project 5", "color": (0, 255, 255)},  # Cyan
+        2: {"action": "project", "label": "Project 6", "color": (255, 0, 100)},  # Pink
+        3: {"action": "project", "label": "Project 7", "color": (128, 255, 0)},  # Lime
+        4: {"action": "project", "label": "Project 8", "color": (128, 0, 255)},  # Purple
+        5: {"action": "project", "label": "Project 9", "color": (0, 255, 128)},  # Spring green
+        6: {"action": "project", "label": "Project 10", "color": (0, 128, 255)},  # Sky blue
+        7: {"action": "project", "label": "Project 11", "color": (255, 255, 255)},  # White
         8: {"action": "prevent_sleep"},
         9: {"action": "layer_shift"},  # Layer shift key - toggles back to layer 0
-    }
+    },
 }
 
 # ----- CONFIG FILE LOADING -----
@@ -558,15 +558,17 @@ def safe_send(ser, data):
         return False
 
 def get_all_projects():
-    """Collect all project labels from both layers of the KEYMAP"""
+    """Collect (label, color) of all projects from both layers of the KEYMAP"""
     projects = []
+    seen = set()
     for layer in sorted(KEYMAP.keys()):
         for btn in sorted(KEYMAP[layer].keys()):
             config = KEYMAP[layer][btn]
             if config.get("action") == "project":
                 label = config.get("label", "Unknown")
-                if label not in projects:
-                    projects.append(label)
+                if label not in seen:
+                    seen.add(label)
+                    projects.append((label, config.get("color")))
     return projects
 
 def menu_mode():
@@ -589,9 +591,10 @@ def menu_mode():
                 print("  Not tracking")
             print()
             print("  [0] Stop tracking" if tracker.current_task else "  [0] Start tracking (General)")
-            for i, label in enumerate(projects, 1):
+            for i, (label, color) in enumerate(projects, 1):
                 marker = " *" if tracker.current_task == label else ""
-                print(f"  [{i}] {label}{marker}")
+                swatch = color_swatch(color)
+                print(f"  [{i:>2}] {swatch + ' ' if swatch else ''}{label}{marker}")
             print(f"  [s] Show summary")
             sleep_label = "Disable" if prevent_sleep else "Enable"
             print(f"  [c] {sleep_label} prevent sleep (caffeinate)")
@@ -625,7 +628,7 @@ def menu_mode():
             elif choice.isdigit():
                 idx = int(choice)
                 if 1 <= idx <= len(projects):
-                    tracker.start_task(projects[idx - 1])
+                    tracker.start_task(projects[idx - 1][0])
                 else:
                     print("[WARN] Invalid selection")
             else:
