@@ -312,8 +312,19 @@ def get_key_label(layer, button):
         return "Caffeine"
     return "?"
 
+def use_color():
+    """True if the terminal can show ANSI truecolor (respects NO_COLOR, needs a TTY)"""
+    return sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+
+def color_swatch(rgb):
+    """Return a terminal dot in the given LED color, or empty if colors are off"""
+    if not use_color() or rgb is None:
+        return ""
+    r, g, b = rgb
+    return f"\033[38;2;{r};{g};{b}m\u25cf\033[0m"
+
 def print_key_grid():
-    """Print a 3x3 grid showing key labels for both layers"""
+    """Print a 3x3 grid showing key labels (with LED color dots) for both layers"""
     # Button layout in 3x3 grid (buttons 1-9)
     # Row 1: 1, 2, 3
     # Row 2: 4, 5, 6
@@ -322,17 +333,22 @@ def print_key_grid():
     col_width = 25
 
     for layer in [0, 1]:
-        print(f"\n┌{'─' * (col_width * 3 + 4)}┐")
-        print(f"│{f'Layer {layer}':^{col_width * 3 + 4}}│")
+        print(f"\n┌{'─' * (col_width * 3 + 2)}┐")
+        print(f"│{f'Layer {layer}':^{col_width * 3 + 2}}│")
         print(f"├{'─' * col_width}┬{'─' * col_width}┬{'─' * col_width}┤")
 
         for row in range(3):
-            labels = []
+            cells = []
             for col in range(3):
                 btn = row * 3 + col + 1
                 label = get_key_label(layer, btn)
-                labels.append(f"{label:^{col_width}}")
-            print(f"│{'│'.join(labels)}│")
+                swatch = color_swatch(KEYMAP.get(layer, {}).get(btn, {}).get("color"))
+                # Escape codes have no width, so center on the visible text only
+                text = f"{swatch} {label}" if swatch else label
+                pad = col_width - len(label) - (2 if swatch else 0)
+                left, right = pad // 2, pad - pad // 2
+                cells.append(f"{' ' * left}{text}{' ' * right}")
+            print(f"│{'│'.join(cells)}│")
 
             if row < 2:
                 print(f"├{'─' * col_width}┼{'─' * col_width}┼{'─' * col_width}┤")
